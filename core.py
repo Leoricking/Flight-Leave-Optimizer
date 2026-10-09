@@ -62,7 +62,10 @@ def score(row: dict, transport_twd: int = 1200, overnight_twd: int = 0, luggage_
 
 
 def manual_csv(path):
-    with open(path, encoding='utf-8-sig',newline='') as f:
+    """Accept file path or already-open text stream."""
+    from contextlib import nullcontext
+    ctx = nullcontext(path) if hasattr(path, "read") else open(path, encoding="utf-8-sig", newline="")
+    with ctx as f:
         for row in csv.DictReader(f):
             dep = row.get('departure_date','').strip(); ret = row.get('return_date','').strip()
             if not dep or not ret: continue
@@ -87,3 +90,29 @@ def join_offers(dates, offers, transport_twd=1200, overnight_twd=0, luggage_twd=
         except (TypeError,ValueError):continue
         results.append(r)
     return sorted(results,key=lambda r:(r['total_cost_twd'], -(r['usable_hours'] or 0)))
+
+
+def generate_compare(start: date, end: date, trip_days: int, leave_limits: list[int], holidays: set[date], exact: bool = False) -> list[dict]:
+    """Generate once with the largest allowance, then label leave groups."""
+    if not leave_limits: return []
+    limits = sorted(set(int(n) for n in leave_limits))
+    rows = generate(start, end, trip_days, max(limits), holidays)
+    return [dict(r, leave_group=str(r['leave_days'])) for r in rows if (r['leave_days'] in limits if exact else r['leave_days'] <= max(limits))]
+
+
+def rank_offers(rows: list[dict], ranking: str = '綜合推薦', minimum_hours: float = 0, leave_penalty_twd: int = 0) -> list[dict]:
+    """Missing arrival/departure times must never outrank known-time offers in time-based modes."""
+    enriched=[]
+    for r in rows:
+        r=dict(r)
+        r['adjusted_cost_twd']=r['total_cost_twd'] + int(r.get('leave_days',0))*leave_penalty_twd
+        if minimum_hours and (r.get('usable_hours') is None or r['usable_hours'] < minimum_hours): continue
+        if ranking == '最多可玩時間':
+            key=(r.get('usable_hours') is None,-(r.get('usable_hours') or 0),r['adjusted_cost_twd'])
+        elif ranking == '最低總成本':
+            key=(r['adjusted_cost_twd'],-(r.get('usable_hours') or 0))
+        else:
+            # Calculate a transparent cost per usable hour, with unknown times ranked last.
+            key=(r.get('cost_per_hour') is None,r.get('cost_per_hour') if r.get('cost_per_hour') is not None else float('inf'),r['adjusted_cost_twd'])
+        enriched.append((key,r))
+    return [r for _,r in sorted(enriched,key=lambda kv:kv[0])]

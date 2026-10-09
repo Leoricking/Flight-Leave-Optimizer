@@ -1,4 +1,5 @@
 streamlit>=1.39,<2
 pandas>=2.2,<3
 requests>=2.31,<3
-artifact_tool
+xlsxwriter>=3.1,<4
+plotly>=5.20,<7

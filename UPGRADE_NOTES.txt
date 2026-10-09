@@ -1,0 +1,1 @@
+v0.6.1 Windows SQLite backup lock fix. Retains all v0.6/v0.5 analytics, charts, Ollama and scheduler. Preserve existing data/price_history.sqlite3 and secrets.
