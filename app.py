@@ -16,14 +16,15 @@ from core import generate, holiday_set, manual_csv, join_offers
 from providers import duffel_search
 from serpapi_provider import serpapi_search
 from report import make_summary, add_ranks, csv_bytes, excel_bytes, COLUMNS, SUMMARY_COLUMNS
+from history_ranking import select_historical_offers, rank_rows
 
 DB_PATH=Path(__file__).parent/'data/price_history.sqlite3'
 history_db=PriceHistory(DB_PATH)
-st.set_page_config(page_title='Flight Leave Optimizer v0.6.2',page_icon='✈️',layout='wide')
-st.title('✈️ Flight Leave Optimizer v0.6.2')
-st.caption('v0.6.2-WINBACKUP-FIX｜一次比較請 2 天／3 天假｜機票參考價及完整行程分開呈現｜搜尋結果付款前需重新核價')
+st.set_page_config(page_title='Flight Leave Optimizer v0.6.3',page_icon='✈️',layout='wide')
+st.title('✈️ Flight Leave Optimizer v0.6.3')
+st.caption('v0.6.3-HISTORY-RANKING｜一次比較請 2 天／3 天假｜機票參考價及完整行程分開呈現｜搜尋結果付款前需重新核價')
 with st.expander('🔎 版本與檔案檢查', expanded=False):
-    st.code(f'版本：v0.6.2-WINBACKUP-FIX\napp.py：{Path(__file__).resolve()}\nhistory_io.py：{Path(__import__("history_io").__file__).resolve()}')
+    st.code(f'版本：v0.6.3-HISTORY-RANKING\napp.py：{Path(__file__).resolve()}\nhistory_io.py：{Path(__import__("history_io").__file__).resolve()}')
 with st.sidebar:
     st.header('旅遊條件')
     c1,c2=st.columns(2)
@@ -104,41 +105,61 @@ else:
                 snap=Path('data/last_search_snapshot.json');snap.parent.mkdir(exist_ok=True)
                 snap.write_text(json.dumps(found,ensure_ascii=False,indent=2),encoding='utf-8')
 
-# Candidate overview always includes missing-price combinations.
-offers=st.session_state['offers_v02']
-valid=join_offers(candidate,offers,transport,overnight,luggage,direct_only)
-if rank_by=='最低票價':valid.sort(key=lambda x:(x['price_twd'],-(x.get('usable_hours') or 0)))
-elif rank_by=='每小時旅遊成本最低':valid.sort(key=lambda x:(x.get('cost_per_hour') if x.get('cost_per_hour') is not None else float('inf'),x['total_cost_twd']))
-elif rank_by=='可玩時間最長':valid.sort(key=lambda x:(-(x.get('usable_hours') or -1),x['total_cost_twd']))
-else:valid.sort(key=lambda x:(x['total_cost_twd'],-(x.get('usable_hours') or 0)))
+# Explicitly distinguish session-only search results from saved SQLite snapshots.
+all_saved_quotes = history_db.quotes(origin, destination)
+view_mode = st.radio('排名資料模式', ['歷史最低價（SQLite）', '最近一次歷史報價（SQLite）', '本次搜尋（Session）'],
+                     horizontal=True, help='歷史價格不是即時可購價格；不會重新呼叫 API。')
+if view_mode == '本次搜尋（Session）':
+    offers = st.session_state['offers_v02']
+    historical = False
+else:
+    historical = True
+    offers = select_historical_offers(candidate, all_saved_quotes,
+        strategy='最近一次報價' if view_mode.startswith('最近') else '歷史最低價')
+ranked, summary = rank_rows(candidate, offers, transport, overnight, luggage, direct_only, rank_by)
 
-ranked=add_ranks(valid)
-summary=make_summary(candidate,ranked)
 st.subheader('📅 所有日期 × 已知最低票價')
-st.caption(f'完整列出 {len(candidate)} 組合法日期；取得價格 {sum(r["lowest_price_twd"] is not None for r in summary)} 組，未取得 {sum(r["lowest_price_twd"] is None for r in summary)} 組。')
+st.caption(f'目前模式：{view_mode}｜符合日期 {len(candidate)} 組；有價格 {sum(x["lowest_price_twd"] is not None for x in summary)} 組。')
+if historical:
+    st.warning('這些是過去已觀察到的歷史票價，並非當下可購票價。付款前必須重新查價。')
 st.dataframe(pd.DataFrame(summary).rename(columns={
     'departure_date':'去程日','return_date':'回程日','leave_days':'請假天數',
-    'leave_dates':'請假日期','lowest_price_twd':'最低來回票價 TWD',
+    'leave_dates':'請假日期','lowest_price_twd':'最低已知票價 TWD',
     'total_cost_twd':'總成本 TWD','usable_hours':'可玩小時',
-    'price_status':'報價狀態','airline':'航空公司','direct':'直飛','source':'來源','flight_rank':'排名',
-}),hide_index=True,use_container_width=True)
-st.caption('INDICATIVE＝來回參考價，尚未確認完整回程；SEARCH_RESULT＝已配對去回程搜尋結果；MANUAL＝手動報價；TEST＝沙盒價格。')
-st.subheader('🏆 航班排名')
-if not ranked:
-    st.info('尚未取得符合條件的報價；請按「一鍵搜尋」或手動匯入 CSV。')
-else:
-    cols=['rank','departure_date','return_date','leave_days','leave_dates','price_twd','total_cost_twd','usable_hours','cost_per_hour','airline','direct','source','mode','outbound_departure','outbound_arrival','return_departure','return_arrival']
+    'price_status':'價格類型','airline':'航空公司','direct':'直飛','source':'來源','flight_rank':'排名'
+}), hide_index=True, use_container_width=True)
+st.caption('INDICATIVE＝尚未確認回程的參考價；SEARCH_RESULT＝已配對去回程的搜尋結果；TEST＝沙盒報價。')
+st.subheader('🏆 航班排名' + ('（歷史，須重新核價）' if historical else '（本次搜尋）'))
+if ranked:
+    cols=['rank','departure_date','return_date','leave_days','leave_dates','price_twd',
+          'total_cost_twd','usable_hours','cost_per_hour','airline','direct','source','mode',
+          'observed_at','outbound_departure','outbound_arrival','return_departure','return_arrival']
     st.dataframe(pd.DataFrame(ranked).reindex(columns=cols),hide_index=True,use_container_width=True)
-    if any(r.get('mode') in ('TEST','INDICATIVE') for r in ranked):
-        st.warning('排行榜可能包含測試價或未配對回程的參考價，不能直接當作最終可購票價。')
+else:
+    st.info('目前模式沒有符合條件的報價。可切換至歷史模式，或檢查日期與直飛條件。')
+
+# Create BOTH rankings regardless of which mode is currently selected.
+session_ranked, session_summary = rank_rows(candidate, st.session_state['offers_v02'],
+    transport, overnight, luggage, direct_only, rank_by)
+historic_offers = select_historical_offers(candidate, all_saved_quotes, strategy='歷史最低價')
+historic_ranked, historic_summary = rank_rows(candidate, historic_offers,
+    transport, overnight, luggage, direct_only, rank_by)
+latest_offers = select_historical_offers(candidate, all_saved_quotes, strategy='最近一次報價')
+latest_ranked, latest_summary = rank_rows(candidate, latest_offers,
+    transport, overnight, luggage, direct_only, rank_by)
 
 st.subheader('📥 下載完整報表')
-st.caption('Excel 包含：所有日期最低票價、航班排名、歷史報價快照（observed_at）、報表說明。CSV 可單獨下載。')
-st.download_button('⬇️ 完整 Excel（含歷史報價）',data=excel_bytes(summary,ranked,history_db.quotes(origin,destination)),file_name='flight_leave_optimizer_v0.6.1.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',type='primary')
+st.caption('不必重新呼叫 API。Excel 分別列出本次搜尋、歷史最低價、最近一次歷史報價，以及所有原始快照。')
+st.download_button('⬇️ 完整 Excel（含歷史排名）',
+    data=excel_bytes(session_summary,session_ranked,all_saved_quotes,
+        historic_summary=historic_summary,historic_ranked=historic_ranked,
+        latest_summary=latest_summary,latest_ranked=latest_ranked),
+    file_name='flight_leave_optimizer_v0.6.3.xlsx',
+    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',type='primary')
 a,b=st.columns(2)
-a.download_button('⬇️ 所有日期最低票價.csv',data=csv_bytes(summary,SUMMARY_COLUMNS),file_name='all_dates_lowest_prices.csv',mime='text/csv')
-b.download_button('⬇️ 航班排名.csv',data=csv_bytes(ranked,COLUMNS),file_name='flight_rankings.csv',mime='text/csv',disabled=not bool(ranked))
-st.caption('搜尋價格與可售性會變動，SerpApi/Google Flights 不等於票務代理；實際付款前請至航空公司或訂票網站重新確認。')
+a.download_button('⬇️ 所有日期最低票價.csv',data=csv_bytes(summary,SUMMARY_COLUMNS),file_name='all_dates_lowest_prices.csv')
+b.download_button('⬇️ 航班排名.csv',data=csv_bytes(ranked,COLUMNS),file_name='flight_rankings.csv',disabled=not bool(ranked))
+st.caption('歷史排名顯示的最低價是觀察值，不能視為目前可購報價。')
 
 
 st.divider()

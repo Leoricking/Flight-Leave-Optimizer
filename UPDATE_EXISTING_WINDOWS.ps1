@@ -14,7 +14,7 @@ $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 $backupDir = Join-Path $targetFull "backup\source_before_v062_$stamp"
 New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
 # Back up any existing app and modules before patching. Never touch data, .env, Git metadata.
-$names = @('app.py','history_io.py','history.py','analytics.py','automation.py','core.py','forecast.py','ollama_analysis.py','providers.py','report.py','serpapi_provider.py','requirements.txt','START_WINDOWS.bat','INSTALL_SCHEDULE.ps1','REMOVE_SCHEDULE.ps1','RUN_MONITOR.bat')
+$names = @('app.py','history_ranking.py','history_io.py','history.py','analytics.py','automation.py','core.py','forecast.py','ollama_analysis.py','providers.py','report.py','serpapi_provider.py','requirements.txt','START_WINDOWS.bat','INSTALL_SCHEDULE.ps1','REMOVE_SCHEDULE.ps1','RUN_MONITOR.bat')
 foreach ($name in $names) {
     $dst = Join-Path $targetFull $name
     if (Test-Path $dst) { Copy-Item -LiteralPath $dst -Destination (Join-Path $backupDir $name) -Force }
@@ -27,5 +27,5 @@ foreach ($name in $names) {
 $cache = Join-Path $targetFull '__pycache__'
 if (Test-Path $cache) { Remove-Item -LiteralPath $cache -Recurse -Force -ErrorAction SilentlyContinue }
 Write-Host "Updated. Previous source backed up: $backupDir" -ForegroundColor Green
-Write-Host 'Confirm the main page says v0.6.2-WINBACKUP-FIX. Your data folder and API key are untouched.'
+Write-Host 'Confirm the main page says v0.6.3-HISTORY-RANKING. Your data folder and API key are untouched.'
 Write-Host "To start: cd `"$targetFull`"; python -m streamlit run app.py"

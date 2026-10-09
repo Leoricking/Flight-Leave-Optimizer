@@ -48,11 +48,19 @@ def export_csv(rows,path,columns=COLUMNS):
     path.write_bytes(csv_bytes(rows,columns))
     return path
 
-def excel_bytes(summary, ranked, history_quotes=None):
-    """Create 2 styled Excel sheets suitable for regular pip-based Windows installs."""
+def excel_bytes(summary, ranked, history_quotes=None, *, historic_summary=None, historic_ranked=None, latest_summary=None, latest_ranked=None):
+    """Export current and historical rankings without requiring a new API call."""
     out=BytesIO()
     with pd.ExcelWriter(out,engine='xlsxwriter',datetime_format='yyyy-mm-dd hh:mm',engine_kwargs={'options':{'strings_to_urls':False}}) as writer:
         specs=[('所有日期最低票價',summary,SUMMARY_COLUMNS),('航班排名',ranked,COLUMNS)]
+        if historic_summary is not None:
+            specs.append(('歷史日期最低票價',historic_summary,SUMMARY_COLUMNS))
+        if historic_ranked is not None:
+            specs.append(('歷史航班排名',historic_ranked,COLUMNS+['observed_at','historical_status']))
+        if latest_summary is not None:
+            specs.append(('最近日期報價',latest_summary,SUMMARY_COLUMNS))
+        if latest_ranked is not None:
+            specs.append(('最近航班排名',latest_ranked,COLUMNS+['observed_at','historical_status']))
         for sheet,rows,cols in specs:
             df=pd.DataFrame(rows).reindex(columns=cols)
             df=df.where(pd.notna(df),'')
@@ -85,7 +93,7 @@ def excel_bytes(summary, ranked, history_quotes=None):
             ws.set_column(0,0,29);ws.set_column(1,len(HISTORY_COLS)-1,22)
         meta=book.add_worksheet('報表說明')
         meta.set_column('A:A',26);meta.set_column('B:B',104)
-        instructions=[('報表','Flight Leave Optimizer v0.3'),('所有日期最低票價','每個符合請假條件的日期組合都會保留；沒有資料時顯示「未取得」。'),('航班排名','依主畫面所選排序規則排名，包含所有已取得的航班報價。'),('INDICATIVE','搜尋參考價格，尚未確認完整去回程航班。'),('SEARCH_RESULT','已配對去回程的搜尋結果；付款前仍需驗證票價與座位。'),('TEST','沙盒測試價格，不是真實可購價格。'),('MANUAL','由使用者自行輸入或匯入的報價。'),('最低價','「所有日期最低票價」依票價選最低，與依其他規則排列的「航班排名」可能不同。')]
+        instructions=[('報表','Flight Leave Optimizer v0.6.3'),('所有日期最低票價','每個符合請假條件的日期組合都會保留；沒有資料時顯示「未取得」。'),('航班排名','依主畫面所選排序規則排名，包含所有已取得的航班報價。'),('INDICATIVE','搜尋參考價格，尚未確認完整去回程航班。'),('SEARCH_RESULT','已配對去回程的搜尋結果；付款前仍需驗證票價與座位。'),('TEST','沙盒測試價格，不是真實可購價格。'),('MANUAL','由使用者自行輸入或匯入的報價。'),('最低價','歷史最低是過去已記錄的價格，非即時可購。歷史排名顯示 observed_at；請重新核價。')]
         for n,(a,b) in enumerate(instructions):meta.write(n,0,a);meta.write(n,1,b)
     return out.getvalue()
 
